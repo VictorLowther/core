@@ -49,8 +49,15 @@ changes:
 
 3. Reload the docker service configuration: `systemctl daemon-reload`
 
-After making the above changes. restart the Docker service for them to
-take effect.
+After making the above changes, restart the Docker service for them to
+take effect, and then enable support for your user to run Docker
+without needing to sudo to root:
+
+1. Run `sudo chmod 666 /var/run/docker.sock` to give everyone access
+   to Docker for this session.
+5. Run `sudo usermod -a -G docker <your-user>` to give yourself access
+   to run Docker in future sessions without needing the `chmod 666`
+   hack.  You will need to log out and log back in for this to work, though.
 
 ### The docker-admin command and its environment
 
