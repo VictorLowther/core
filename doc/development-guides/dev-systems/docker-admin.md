@@ -216,3 +216,9 @@ If your development environment is running in VMs then:
        1. `erl` then `bdd:test()`
     1. Rails console in container: `su -l -c 'cd /opt/opencrowbar/core/rails; bundle exec rails c' crowbar`
 '
+
+### Docker Tip: Kill Orphaned Containers
+
+Over time, you may end up with [orphaned contaniers](http://jimhoskins.com/2013/07/27/remove-untagged-docker-images.html), use the following to clean them up
+  1. `docker rm $(docker ps -a -q)`
+  1. `docker rmi $(docker images | grep "^<none>" | awk "{print $3}")`
