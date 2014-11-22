@@ -1,0 +1,9 @@
+[Unit]
+Description=Opencrowbar Provisioner Webserver
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/sws --listen=:<%= @port %> --site=<%= @docroot %>
+
+[Install]
+WantedBy=multi-user.target

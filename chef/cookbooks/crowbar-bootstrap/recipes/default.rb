@@ -304,21 +304,31 @@ bash "Unlock the root account" do
   code "while grep -q '^root:!' /etc/shadow; do usermod -U root; done"
 end
 
-# We need Special Hackery to run sshd in docker.
-if File.file?("/.dockerenv")
-  service "ssh" do
-    service_name "sshd" if node["platform"] == "centos"
-    start_command "/usr/sbin/sshd"
-    stop_command "pkill -9 sshd"
-    status_command "pgrep sshd"
-    restart_command "pkill -9 sshd && /usr/sbin/sshd"
-    action [:start]
+unless File.exists?("/usr/local/go/bin/go")
+  goball="go1.3.3.linux-amd64.tar.gz"
+  bash "Fetch Go installation" do
+    code "curl -fgL -o '/tmp/#{goball}' 'https://storage.googleapis.com/golang/#{goball}'"
+    not_if { File.exists?("/tmp/#{goball}") }
   end
-else
-  service "ssh" do
-    service_name "sshd" if node["platform"] == "centos"
-    action [:enable, :start]
+
+  bash "Install Go" do
+    code "tar -C '/usr/local' -xzf '/tmp/#{goball}'"
+    not_if { File.directory?("/usr/local/go") }
   end
+
+  bash "Remove Go tarball" do
+    code "rm '/tmp/#{goball}'"
+    only_if { File.exists?("/tmp/#{goball}") }
+  end
+
+  cookbook_file "/etc/profile.d/gopath.sh" do
+    action :create
+  end
+end
+
+service "ssh" do
+  service_name "sshd" if node["platform"] == "centos"
+  action [:enable, :start]
 end
 
 directory "/root/.ssh" do

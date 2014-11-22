@@ -24,21 +24,30 @@ web_port = node["crowbar"]["provisioner"]["server"]["web_port"]
 provisioner_web="http://#{v4addr.addr}:#{web_port}"
 node.normal["crowbar"]["provisioner"]["server"]["webserver"]=provisioner_web
 localnets = ["127.0.0.1","::1","fe80::/10"] + node.all_addresses.map{|a|a.network.to_s}.sort
+swsrepo="github.com/VictorLowther/sws"
+bash "Build stupid web server" do
 
-node.set["apache"]["listen_ports"] = [ node["crowbar"]["provisioner"]["server"]["web_port"]]
-include_recipe "apache2"
-
-template "#{node["apache"]["dir"]}/sites-available/provisioner.conf" do
-  path "#{node["apache"]["dir"]}/vhosts.d/provisioner.conf" if node["platform"] == "suse"
-  source "base-apache.conf.erb"
-  mode 0644
-  variables(:docroot => node["crowbar"]["provisioner"]["server"]["root"],
-            :port => node["crowbar"]["provisioner"]["server"]["web_port"],
-            :logfile => "#{node["apache"]["log_dir"]}/provisioner-access_log",
-            :errorlog => "#{node["apache"]["log_dir"]}/provisioner-error_log")
-  notifies :reload, resources(:service => "apache2")
+  code <<EOC
+. /etc/profile
+set -e
+go get #{swsrepo}
+cd "$GOPATH/src/#{swsrepo}"
+go build
+mv sws /usr/local/bin
+EOC
+  not_if "which sws"
 end
-apache_site "provisioner.conf"
+
+template "/etc/systemd/system/provisioner.service" do
+  source "provisioner.service.erb"
+  variables(:docroot => node["crowbar"]["provisioner"]["server"]["root"],
+            :port => node["crowbar"]["provisioner"]["server"]["web_port"])
+  notifies :restart, "service[provisioner]"
+end
+
+service "provisioner" do
+  action [ :enable, :start ]
+end
 
 # Set up the TFTP server as well.
 case node["platform"]
