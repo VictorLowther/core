@@ -1,5 +1,6 @@
 #!/bin/bash
 export LANG=en_US.UTF-8
+export container=docker
 if grep -q crowbar /etc/passwd; then
     find /var /home  -xdev -user crowbar -exec chown "$OUTER_UID" '{}' ';'
     usermod -o -u "$OUTER_UID" crowbar
@@ -15,23 +16,33 @@ if grep -q crowbar /etc/group; then
     usermod -g "$OUTER_GID" crowbar
 fi
 
-if [[ $http_proxy ]] && ! pidof squid; then
-    export upstream_proxy=$http_proxy
+if [[ $http_proxy ]]; then
+    echo "export upstream_proxy=$http_proxy" > /etc/profile.d/upstream_proxy.sh
 fi
 
-if [[ $1 = --no-shell ]]; then
-    shift
-    NO_SHELL=true
-fi
 mkdir -p /root/.ssh
 printf "%s\n" "$SSH_PUBKEY" >> /root/.ssh/authorized_keys
 
-if [[ $1 ]]; then
-    "$@"
-    res=$?
+if [[ ! -L /etc/systemd/system/basic.target.wants/sshd.service ]]; then
+    yum -y swap -- remove fakesystemd -- install systemd systemd-libs
+    yum -y install openssh-server initscripts
+    echo "UseDNS no" >> /etc/ssh/sshd_config
+    echo "PermitRootLogin without-password" >>/etc/ssh/sshd_config
+    sed -i 's/UsePrivilegeSeparation sandbox/UsePrivilegeSeparation no/' /etc/ssh/sshd_config
+
+    sed 's/OOM/#OOM/' < /usr/lib/systemd/system/dbus.service >/etc/systemd/system/dbus.service 
+    ln -sf /usr/lib/systemd/system/basic.target /etc/systemd/system/default.target
+
+    for unit in dev-mqueue.mount dev-hugepages.mount \
+                                 systemd-remount-fs.service sys-kernel-config.mount \
+                                 sys-kernel-debug.mount sys-fs-fuse-connections.mount \
+                                 display-manager.service systemd-logind.service; do
+        ln -sf /dev/null /etc/systemd/system/$unit
+    done
+
+    mkdir -p /etc/systemd/system/basic.target.wants
+    ln -sf /usr/lib/systemd/system/sshd.service /etc/systemd/system/basic.target.wants
 fi
-[[ $NO_SHELL = true ]] && exit ${res:=0}
-. /etc/profile
-export PATH=$PATH:/opt/opencrowbar/core/bin
-/bin/bash -i
-rm -rf /tftpboot/nodes
+(cd /run; rm -rf * || :)
+exec /usr/lib/systemd/systemd
+

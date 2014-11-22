@@ -24,6 +24,13 @@ if ! which docker &>/dev/null; then
     exit 1
 fi
 
+IFS=' .' read -a docker_version < <(docker version |awk -F: '/Client version/ {print $2}') 
+if ! ((docker_version[0] > 1 || (docker_version[0] == 1 && docker_version[1] >= 3))); then
+    echo "docker-admin needs Docker Client version 1.3 or later! You versions are:"
+    docker version
+    exit 1
+fi
+
 if [[ $0 = /* ]]; then
     mountdir="$0"
 elif [[ $0 = .*  || $0 = */* ]]; then
@@ -32,36 +39,31 @@ else
     echo "Cannot figure out where core is!"
     exit 1
 fi
+
+ssh() {
+    command ssh -oCheckHostIP=no -oStrictHostKeyChecking=no -oUserKnownHostsFile=/dev/null "$@"
+}
+
+# The container that we will base the admin image on.
+# Needs to be derived from centos 7.
+#container="centos:centos7"
+#container="opencrowbar/centos:7.0-0"
+container="opencrowbar/centos:7.0-1"
 # This gets us to core
 mountdir="${mountdir%/tools/docker-admin}"
 # This gets us to the parent directory of core, where presumably the rest of our repos are checked out
 mountdir="${mountdir%/*}"
 
-declare -A image_map
-#image_map["ubuntu"]="ubuntu:precise"
-image_map["ubuntu"]="opencrowbar/ubuntu:12.04-4"
-#image_map["centos"]="centos:centos6"
-image_map["centos"]="opencrowbar/centos:6.5-12"
-image_map["centos7"]="centos:centos7"
-image_map["opensuse"]="mmckeen/opensuse-13-1:latest"
-image_map["fedora"]="fedora:20"
-image_map["debian"]="debian:jessie"
-image="${image_map[$1]}"
 tftproot="/tftpboot"
-if [[ ! $image ]]; then
-    echo "$1 is not an image we can run on!"
-    printf "Try one of: "
-    printf "%s " "${!image_map[@]}"
-    echo
-    exit 1
-fi
-shift
 
 echo "We will mount $mountdir at /opt/opencrowbar"
 mkdir -p "$HOME/.cache/opencrowbar/tftpboot"
+mkdir -p "$HOME/.cache/opencrowbar/run"
 
 docker_args=(-t -i -w /opt/opencrowbar/core -v "$mountdir:/opt/opencrowbar")
 docker_args+=(-v "$HOME/.cache/opencrowbar/tftpboot:$tftproot")
+docker_args+=(-v "$HOME/.cache/opencrowbar/run:/run")
+docker_args+=(-v "/sys/fs/cgroup:/sys/fs/cgroup:ro")
 docker_args+=(-e "OUTER_UID=$(id -u)")
 docker_args+=(-e "OUTER_GID=$(id -g)")
 if [[ -f $HOME/.ssh/id_rsa.pub ]]; then
@@ -87,10 +89,38 @@ mangle_proxies "$bridge_ip"
 for proxy in "${!mangled_proxies[@]}"; do
     docker_args+=(-e "$proxy=${mangled_proxies[$proxy]}")
 done
-
-# since 0.8.1 we need to run in privileged mode so we can change the networking
-docker_args+=("--privileged")
-# Run whatever we specified to run inside a container.
+docker_args+=("--cap-add=NET_ADMIN"
+              "--cap-add=SYS_ADMIN"
+              "--cap-add=MKNOD"
+              "--cap-add=SYS_TIME")
+if [[ $1 ]]; then
+    ocb_args=("$@")
+    if [[ ${ocb_args[0]} != ${ocb_args[0]#./} ]]; then
+        ocb_args[0]="/opt/opencrowbar/core/${ocb_args[0]#./}"
+    fi
+else
+    ocb_args=("/bin/bash" "-i")
+fi
 sudo rm -rf "$HOME/.cache/opencrowbar/tftpboot/nodes"
-docker run "${docker_args[@]}" "$image" /opt/opencrowbar/core/tools/docker-init.sh "$@"
-exit $?
+container_id=$(docker run -d "${docker_args[@]}" \
+                      "$container" \
+                      /opt/opencrowbar/core/tools/docker-init.sh)
+container_addr=$(gawk 'match($0,/"IPAddress": "([^"]+)"/,m) {print m[1]}' < <(docker inspect $container_id))
+
+if [[ ! $container_addr ]]; then
+    echo "Cannot find address of Docker container!"
+    docker kill $container_id
+    exit 1
+fi
+echo "Waiting for container SSH access (approx. 15 seconds)"
+while ! ssh -l root "$container_addr" true &>/dev/null; do
+    printf '.'
+    sleep 1
+done
+echo
+ssh -l root -t "$container_addr" -- "${ocb_args[@]}"
+echo "Your admin container is still running!"
+echo "You can kill it with:"
+echo "  docker kill $container_id"
+echo
+echo "You can SSH into it with root@$container_addr"
