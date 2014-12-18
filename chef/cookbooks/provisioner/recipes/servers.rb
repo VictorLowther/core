@@ -24,19 +24,6 @@ web_port = node["crowbar"]["provisioner"]["server"]["web_port"]
 provisioner_web="http://#{v4addr.addr}:#{web_port}"
 node.normal["crowbar"]["provisioner"]["server"]["webserver"]=provisioner_web
 localnets = ["127.0.0.1","::1","fe80::/10"] + node.all_addresses.map{|a|a.network.to_s}.sort
-swsrepo="github.com/VictorLowther/sws"
-bash "Build stupid web server" do
-
-  code <<EOC
-. /etc/profile
-set -e
-go get #{swsrepo}
-cd "$GOPATH/src/#{swsrepo}"
-go build
-mv sws /usr/local/bin
-EOC
-  not_if "which sws"
-end
 
 template "/etc/systemd/system/provisioner.service" do
   source "provisioner.service.erb"
@@ -59,25 +46,30 @@ when "suse"
   package "tftp"
 end
 
-case node["platform"]
-when "suse"
+case
+when File.directory?("/usr/lib/systemd/system")
+  template "/etc/systemd/system/tftp.service" do
+    source "tftp.service.erb"
+    variables tftproot: node["crowbar"]["provisioner"]["server"]["root"]
+    notifies :restart, "service[tftp]"
+  end
+  
   service "tftp" do
     enabled true
-    if node["platform_version"].to_f >= 12.3
-      provider Chef::Provider::Service::Systemd
-      service_name "tftp.socket"
-      action [ :enable, :start ]
-    else
-      # on older releases just enable, don't start (xinetd takes care of it)
-      action [ :enable ]
-    end
+    provider Chef::Provider::Service::Systemd
+    service_name "tftp.socket"
+    action [ :enable, :start ]
+  end
+when node["platform"] == "suse"
+  service "tftp" do
+    action [ :enable ]
   end
   service "xinetd" do
     running true
     enabled true
     action [ :enable, :start ]
-  end unless node["platform_version"].to_f >= 12.3
-when "redhat","centos"
+  end
+when ["redhat","centos"].member?(node["platform"])
   template "/etc/xinetd.d/tftp" do
     source "xinetd.tftp.erb"
     variables(:tftproot => node["crowbar"]["provisioner"]["server"]["root"])
@@ -89,7 +81,7 @@ when "redhat","centos"
   service "xinetd" do
     action [:enable, :start]
   end
-when "ubuntu"
+when node["platform"] == "ubuntu"
   service "tftpd-hpa" do
     action [ :enable ]
   end
