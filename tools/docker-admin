@@ -112,7 +112,7 @@ if [[ ! $container_addr ]]; then
     docker kill $container_id
     exit 1
 fi
-echo "Waiting for container SSH access (approx. 15 seconds)"
+echo "Waiting for container SSH access to root@$container_addr (approx. 15 seconds)"
 while ! ssh -l root "$container_addr" true &>/dev/null; do
     printf '.'
     sleep 1
